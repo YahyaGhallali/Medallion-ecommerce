@@ -1,0 +1,14 @@
+[project]
+name = "de"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "notebook>=7.6.3",
+    "pandas>=3.0.6",
+    "pyspark>=4.2.0",
+    "PyArrow",
+    "matplotlib>=3.11.2",
+    "jupytext>=1.19.6",
+]
