@@ -47,3 +47,8 @@ def configure_windows_hadoop(project_dir: Path | None = None) -> None:
 
     # Ensure the JVM can find hadoop.dll via java.library.path
     os.environ["JAVA_LIBRARY_PATH"] = bin_dir
+
+    # Ensure Spark workers use the current Python environment on Windows
+    import sys
+    os.environ["PYSPARK_PYTHON"] = sys.executable
+    os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
