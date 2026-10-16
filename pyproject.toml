@@ -11,4 +11,6 @@ dependencies = [
     "PyArrow",
     "matplotlib>=3.11.2",
     "jupytext>=1.19.6",
+    "databricks-sdk>=0.152.0",
+    "python-dotenv>=1.2.4",
 ]
