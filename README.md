@@ -2,16 +2,17 @@
 
 [![PySpark](https://img.shields.io/badge/PySpark-4.2+-E25A1C.svg?logo=apachespark&logoColor=white)](https://spark.apache.org/)
 [![Python](https://img.shields.io/badge/Python-3.14+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Databricks](https://img.shields.io/badge/Databricks-Unity%20Catalog%20Volumes-FF3621.svg?logo=databricks&logoColor=white)](https://databricks.com/)
 [![uv](https://img.shields.io/badge/managed%20by-uv-DE5FE9.svg?logo=astral&logoColor=white)](https://github.com/astral-sh/uv)
 [![Architecture](https://img.shields.io/badge/Architecture-Medallion%20(Bronze%20%E2%86%92%20Silver%20%E2%86%92%20Gold)-00A86B.svg)]()
 
-An end-to-end data engineering pipeline and lakehouse implementation built with **PySpark**, processing ~100k Brazilian e-commerce orders from the [Olist Dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce). The project implements a **Medallion Architecture** (Bronze ➔ Silver ➔ Gold), cleans relational inconsistencies, models an analytical **Star Schema** (Fact & Dimensions), and extracts core business metrics (KPIs) and visualizations.
+An end-to-end data engineering pipeline and lakehouse implementation built with **PySpark** and **Databricks**, processing ~100k Brazilian e-commerce orders from the [Olist Dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce). The project implements a **Medallion Architecture** (Bronze ➔ Silver ➔ Gold), cleans relational inconsistencies, models an analytical **Star Schema** (Fact & Dimensions), extracts core business metrics (KPIs), and publishes curated data to **Databricks Unity Catalog Volumes**.
 
 ---
 
 ## 📌 Architecture Overview
 
-The pipeline organizes data into three distinct quality and refinement zones:
+The pipeline organizes data into three distinct quality and refinement zones and exports curated datasets to the cloud:
 
 ```mermaid
 flowchart LR
@@ -34,7 +35,11 @@ flowchart LR
         D2["dim_product"]
         D3["dim_seller"]
         D4["dim_date"]
-        KPI["Analytical Marts & KPIs\n• Monthly Revenue & MoM Growth\n• Top Categories per State\n• Seller Delivery Delays\n• Customer Retention Rate\n• Cumulative Revenue Trends"]
+        KPI["Analytical Marts & KPIs\n• Monthly Revenue & MoM Growth\n• Top Categories per State\n• Seller Delivery Delays\n• Customer Retention Rate\n• Cumulative Revenue Trends\n• Revenue by Payment Type"]
+    end
+
+    subgraph Cloud["Cloud Lakehouse / Data Warehouse"]
+        DBX["Databricks Unity Catalog\nVolumes: /Volumes/olist/gold/landing"]
     end
 
     CSV --> B_P
@@ -45,17 +50,21 @@ flowchart LR
     S_P --> D3
     S_P --> D4
     F & D1 & D2 & D3 & D4 --> KPI
+    F & D1 & D2 & D3 & D4 & KPI --> DBX
 ```
 
 ---
 
-## 🏗️ Medallion Layers
+## 🏗️ Medallion Layers & Modules
 
-| Layer | Path | Description & Transformations |
-| :--- | :--- | :--- |
-| **Bronze** | [`data/bronze/`](file:///c:/Users/yahya/Desktop/DE/data/bronze) | **Raw Ingestion**: Reads source CSV files using strict `StructType` schemas (avoiding expensive and error-prone `inferSchema`). Appends `ingestion_timestamp` and writes unmodified data into partitioned Parquet format. |
-| **Silver** | [`data/silver/`](file:///c:/Users/yahya/Desktop/DE/data/silver) | **Cleaned & Standardized**: Dates converted from strings to timestamps; string columns trimmed and lowercased; duplicates removed (crucial for geolocation zip codes); Portuguese category names joined with translations; invalid/null values audited. |
-| **Gold** | [`data/gold/`](file:///c:/Users/yahya/Desktop/DE/data/gold) | **Dimensional Modeling (Star Schema)**: Fact and dimension tables equipped with surrogate keys (`*_sk`), optimized for analytical OLAP queries, plus pre-computed analytical KPI datasets. |
+The pipeline is implemented as a modular Python package under [`workflow/`](file:///c:/Users/yahya/Desktop/DE/workflow):
+
+| Layer | Script / Module | Path | Description & Transformations |
+| :--- | :--- | :--- | :--- |
+| **Bronze** | [`workflow/bronze.py`](file:///c:/Users/yahya/Desktop/DE/workflow/bronze.py) | [`data/bronze/`](file:///c:/Users/yahya/Desktop/DE/data/bronze) | **Raw Ingestion**: Reads source CSV files using strict `StructType` schemas (avoiding expensive and error-prone `inferSchema`). Appends `ingestion_timestamp` and writes unmodified data into Parquet format. |
+| **Silver** | [`workflow/silver.py`](file:///c:/Users/yahya/Desktop/DE/workflow/silver.py) | [`data/silver/`](file:///c:/Users/yahya/Desktop/DE/data/silver) | **Cleaned & Standardized**: Dates converted from strings to timestamps; string columns trimmed and lowercased; duplicates removed (crucial for geolocation zip codes); Portuguese category names joined with translations; invalid/null values filtered. |
+| **Gold** | [`workflow/gold.py`](file:///c:/Users/yahya/Desktop/DE/workflow/gold.py) | [`data/gold/`](file:///c:/Users/yahya/Desktop/DE/data/gold) | **Dimensional Modeling (Star Schema)**: Fact and dimension tables equipped with surrogate keys (`*_sk`), optimized for analytical OLAP queries, plus pre-computed analytical KPI datasets. |
+| **Publish** | [`workflow/publish_databricks.py`](file:///c:/Users/yahya/Desktop/DE/workflow/publish_databricks.py) | `/Volumes/olist/gold/landing` | **Cloud Export**: Uses `databricks-sdk` to upload all Gold layer tables and KPI Parquet files directly into Databricks Unity Catalog Volumes. |
 
 ---
 
@@ -128,7 +137,7 @@ erDiagram
 ### 🔑 Key Data Engineering Design Decisions
 
 1. **Fact Table Grain**:
-   - The grain of [`fact_order_items`](file:///c:/Users/yahya/Desktop/DE/gold.ipynb) is **one row per item sold** (`order_id` + `order_item_id`). An order may contain multiple items, potentially from different sellers with different shipping limits and prices. Modeling at the item grain avoids loss of seller- and product-level granularity.
+   - The grain of [`fact_order_items`](file:///c:/Users/yahya/Desktop/DE/workflow/gold.py) is **one row per item sold** (`order_id` + `order_item_id`). An order may contain multiple items, potentially from different sellers with different shipping limits and prices. Modeling at the item grain avoids loss of seller- and product-level granularity.
 2. **`customer_id` vs. `customer_unique_id`**:
    - In Olist, `customer_id` is an order-scoped token (changes with every purchase).
    - `customer_unique_id` identifies the actual human entity across multiple orders. Retaining both in `dim_customer` allows accurate identification of repeat customers.
@@ -142,45 +151,49 @@ erDiagram
 
 ## 📊 Business Intelligence & KPIs
 
-Computed from the Gold layer tables inside [`gold.ipynb`](file:///c:/Users/yahya/Desktop/DE/gold.ipynb):
+Computed from the Gold layer tables inside [`workflow/gold.py`](file:///c:/Users/yahya/Desktop/DE/workflow/gold.py) (and interactive [`gold.ipynb`](file:///c:/Users/yahya/Desktop/DE/gold.ipynb)):
 
 | # | Business KPI | Spark Engine Implementation | Output Dataset |
 | :---: | :--- | :--- | :--- |
 | **1** | **Monthly Revenue & MoM Growth** | `lag("revenue")` window partitioned chronologically to compute percentage change over time. | `kpi_monthly_revenue.parquet` |
 | **2** | **Top 3 Product Categories per State** | `row_number()` window partitioned by `customer_state` and ordered by `total_revenue DESC`. | `kpi_top3_categories_per_state.parquet` |
 | **3** | **Average Delivery Delay per Seller** | Aggregates actual vs. estimated delivery variance, average delay days, and seller delay rate (`late_pct`). | `kpi_delivery_delay_per_seller.parquet` |
-| **4** | **Repeat-Customer Rate** | Grouping by `customer_unique_id` to evaluate retention rate (one-time vs. repeat buyers). | `kpi_repeat_customer_rate.parquet` |
+| **4** | **Repeat-Customer Rate** | Grouping by `customer_unique_id` to evaluate retention rate (one-time vs. repeat buyers). | `kpi_repeat_customer_rate.parquet`<br>`kpi_order_count_distribution.parquet` |
 | **5** | **Cumulative Revenue Over Time** | Running total with `sum().over(Window.rowsBetween(unboundedPreceding, currentRow))`. | `kpi_cumulative_revenue.parquet` |
-| **6** | **Payment Method Breakdown** | Revenue share %, average transaction size, and installment behavior across credit card, boleto, voucher, and debit. | `kpi_revenue_by_payment_type.parquet` |
-
-### 📈 Revenue Visualization
-
-The project includes an automated visualization pipeline in [`analysis.py`](file:///c:/Users/yahya/Desktop/DE/analysis.py):
-
-![Monthly Revenue Analysis](file:///c:/Users/yahya/Desktop/DE/data/gold/payments_monthly_analysis.png)
+| **6** | **Payment Method Breakdown** | Revenue share %, transaction count, and average installments across credit card, boleto, voucher, and debit. | `kpi_revenue_by_payment_type.parquet` |
 
 ---
 
 ## 📁 Repository Structure
 
 ```text
-├── .hadoop/                  # Automatic local Hadoop winutils binaries for Windows
-├── data/
-│   ├── raw/                  # Downloaded raw Olist CSV files
-│   ├── bronze/               # Ingested Parquet files with explicit schema
-│   ├── silver/               # Cleaned, typed, and deduplicated Parquet files
-│   └── gold/                 # Star schema (fact/dims) and analytical Parquet outputs
-├── analysis.py               # Visual analytics script generating matplotlib charts
-├── data_design_tables.md     # Detailed data dictionary, ER diagrams, and join paths
-├── download_olist.py         # Automated Kaggle dataset downloader script
-├── ingestion.ipynb           # Phase 1: Raw ingestion to Bronze layer
-├── silver.ipynb              # Phase 2: Cleaning and Silver transformations
-├── gold.ipynb                # Phase 3: Star schema modeling and KPI generation
-├── plan.md                   # Project architecture blueprint and definition of done
-├── pysparkcode.py            # PySpark syntax reference and performance tuning guide
-├── pyproject.toml            # Project dependencies and packaging metadata
-├── spark_windows.py          # Windows Hadoop / winutils automatic configuration helper
-└── uv.lock                   # Deterministic lockfile
+├── .hadoop/                        # Automatic local Hadoop winutils binaries for Windows
+├── data/                           # Medallion data directories (gitignored)
+│   ├── raw/                        # Downloaded raw Olist CSV files
+│   ├── bronze/                     # Ingested Parquet files with explicit schema
+│   ├── silver/                     # Cleaned, typed, and deduplicated Parquet files
+│   └── gold/                       # Star schema (fact/dims) and analytical Parquet outputs
+├── experimental-notebooks/         # Exploratory prototyping Jupyter notebooks
+│   ├── ingestion.ipynb             # Phase 1 exploratory raw ingestion
+│   ├── silver.ipynb                # Phase 2 exploratory cleaning & transformations
+│   └── gold.ipynb                  # Phase 3 exploratory modeling & KPI testing
+├── info-docs/                      # Architecture blueprints & reference documents
+│   ├── data_design_tables.md       # Comprehensive data dictionary, ER diagrams & joins
+│   └── plan.md                     # Medallion architecture roadmap & definition of done
+├── workflow/                       # Modular production pipeline package
+│   ├── __init__.py                 # Package marker
+│   ├── common.py                   # Shared paths and SparkSession factory
+│   ├── bronze.py                   # Bronze layer raw ingestion
+│   ├── silver.py                   # Silver layer data cleansing & curation
+│   ├── gold.py                     # Gold layer dimensional modeling & KPIs
+│   ├── run_pipeline.py             # CLI runner for end-to-end pipeline execution
+│   └── publish_databricks.py       # Databricks Unity Catalog Volume publisher
+├── download_olist.py               # Automated Kaggle dataset downloader script
+├── gold.ipynb                      # Root interactive notebook for gold layer analysis
+├── pysparkcode.py                  # PySpark syntax reference and performance tuning guide
+├── pyproject.toml                  # Project dependencies and packaging metadata
+├── spark_windows.py                # Windows Hadoop / winutils & Python worker configuration
+└── uv.lock                         # Deterministic lockfile
 ```
 
 ---
@@ -190,12 +203,12 @@ The project includes an automated visualization pipeline in [`analysis.py`](file
 ### 1. Prerequisites
 
 - **Python**: 3.11+ (Python 3.14 tested)
-- **Java**: JDK 17+ installed and set on `JAVA_HOME`
-- **uv**: Recommended package manager ([astral.sh/uv](https://astral.sh/uv))
+- **Java**: JDK 17+ installed and configured on `JAVA_HOME`
+- **uv**: Recommended high-speed package manager ([astral.sh/uv](https://astral.sh/uv))
 
 ### 2. Environment Setup
 
-Clone the repository and install dependencies with `uv`:
+Clone the repository and install dependencies using `uv`:
 
 ```bash
 # Clone the repository
@@ -206,47 +219,79 @@ cd Medallion-ecommerce
 uv sync
 ```
 
-### 3. Windows Hadoop Setup
+### 3. Windows Hadoop Configuration
 
-If running on Windows, PySpark requires Hadoop native binaries (`winutils.exe` and `hadoop.dll`). This repository handles this automatically via [`spark_windows.py`](file:///c:/Users/yahya/Desktop/DE/spark_windows.py):
+When executing PySpark on Windows, Hadoop native binaries (`winutils.exe` and `hadoop.dll`) and worker Python environment paths are configured automatically via [`spark_windows.py`](file:///c:/Users/yahya/Desktop/DE/spark_windows.py):
 
 ```python
 from spark_windows import configure_windows_hadoop
 
-# Automatically downloads winutils.exe and hadoop.dll to .hadoop/bin and configures HADOOP_HOME
+# Downloads winutils/hadoop.dll to .hadoop/bin and sets HADOOP_HOME & PYSPARK_PYTHON
 configure_windows_hadoop()
 ```
 
 ### 4. Fetch the Dataset
 
-To fetch the raw dataset directly from Kaggle:
+Download the Olist Brazilian E-Commerce dataset directly from Kaggle:
 
 ```bash
-# Configure your Kaggle credentials (~/.kaggle/kaggle.json or env vars)
-# Run the download script
+# Ensure Kaggle credentials are configured (~/.kaggle/kaggle.json or KAGGLE_USERNAME / KAGGLE_KEY)
 uv run python download_olist.py --output-dir data/raw
 ```
 
-### 5. Running the Pipeline
+### 5. Running the Pipeline via CLI
 
-Execute the pipeline layers sequentially:
+The pipeline can be executed as a unified process or by individual stages using [`workflow/run_pipeline.py`](file:///c:/Users/yahya/Desktop/DE/workflow/run_pipeline.py):
 
-1. **Bronze Layer**: Open and execute [`ingestion.ipynb`](file:///c:/Users/yahya/Desktop/DE/ingestion.ipynb) to ingest raw CSVs to Parquet with explicit schemas.
-2. **Silver Layer**: Run [`silver.ipynb`](file:///c:/Users/yahya/Desktop/DE/silver.ipynb) to clean, standardize, and deduplicate tables.
-3. **Gold Layer**: Run [`gold.ipynb`](file:///c:/Users/yahya/Desktop/DE/gold.ipynb) to generate the dimensional star schema and compute business KPIs.
-4. **Visual Analytics**: Generate revenue and MoM growth charts:
-   ```bash
-   uv run python analysis.py
+```bash
+# Run the entire pipeline end-to-end (Bronze -> Silver -> Gold)
+uv run python workflow/run_pipeline.py --stage all
+
+# Or run a specific stage independently:
+uv run python workflow/run_pipeline.py --stage bronze
+uv run python workflow/run_pipeline.py --stage silver
+uv run python workflow/run_pipeline.py --stage gold
+```
+
+### 6. Publishing Gold Datasets to Databricks
+
+Deploy all Gold layer Star Schema dimensions, fact tables, and computed KPIs to **Databricks Unity Catalog Volumes** using [`workflow/publish_databricks.py`](file:///c:/Users/yahya/Desktop/DE/workflow/publish_databricks.py):
+
+1. Create a `.env` file in the root directory (or export environment variables):
+   ```ini
+   DATABRICKS_HOST="https://<databricks-instance>.cloud.databricks.com"
+   DATABRICKS_TOKEN="dapi********************************"
    ```
+
+2. Execute the publisher:
+   ```bash
+   uv run python workflow/publish_databricks.py
+   ```
+   This uploads all parquet partitions directly into the target volume path: `/Volumes/olist/gold/landing/<table_name>/<filename>.parquet`.
+
+### 7. Interactive Exploration (Jupyter)
+
+For exploratory analysis and visual checks:
+
+```bash
+# Launch Jupyter
+uv run jupyter lab
+
+# Explore notebooks:
+# - experimental-notebooks/ingestion.ipynb
+# - experimental-notebooks/silver.ipynb
+# - experimental-notebooks/gold.ipynb (or root gold.ipynb)
+```
 
 ---
 
 ## 🛠️ Performance & Engineering Best Practices
 
-- **Explicit Schemas**: Ingestion disables `inferSchema` across all 9 tables, preventing costly full-file scans and type ambiguities.
-- **Controlled Partitions**: Set `spark.sql.shuffle.partitions` to `8` for local multi-core execution instead of Spark's default `200`, eliminating excessive task scheduling overhead on laptop hardware.
-- **Broadcast Joins**: Used on smaller lookup dimensions (`dim_seller`, `dim_product`, category translations) to eliminate expensive cross-network shuffles during joins.
-- **Windowing over Self-Joins**: MoM growth and category ranking utilize native Spark SQL window functions (`lag`, `row_number`) rather than expensive recursive joins.
+- **Explicit Schemas**: Ingestion disables `inferSchema` across all 9 tables, eliminating costly full-file scans and schema ambiguity.
+- **Controlled Shuffle Partitions**: Configured `spark.sql.shuffle.partitions` to `8` for local multi-core execution instead of Spark's default `200`, preventing excessive task scheduling overhead on laptop hardware.
+- **Broadcast Joins**: Applied to smaller lookup dimensions (`dim_seller`, `dim_product`, category translations) to eliminate expensive cross-network shuffles.
+- **Window Functions over Self-Joins**: Month-over-month growth, category rankings, and cumulative totals leverage native Spark SQL window functions (`lag`, `row_number`, unbounded window frames).
+- **Environment Consistency**: `spark_windows.py` dynamically anchors `PYSPARK_PYTHON` and `PYSPARK_DRIVER_PYTHON` to the active virtual environment's Python executable.
 
 ---
 
